@@ -1,3 +1,5 @@
+/* eslint-disable @typescript-eslint/no-unused-vars */
+/* eslint-disable @typescript-eslint/no-explicit-any */
 
 import httpStatus from "http-status-codes"
 import mongoose, { Types } from "mongoose";
@@ -19,8 +21,9 @@ import AppError from "../../errorHelpers/appError";
 import { QueryBuilder } from "../../utils/QueryBuilder";
 import { orderSearchableFields } from "./order.constants";
 import { Role } from "../user/user.interface";
+import { CourierServices } from "../courier/courier.service";
 
-type TCreateOrderPayload = {
+interface TCreateOrderPayload {
   orderType: OrderType;
   paymentMethod?: PaymentMethod;
   products: IOrderProduct[];
@@ -221,17 +224,30 @@ const deleteOrder = async (id: string) => {
   return { data: null };
 };
 
-const updateOrder = async (orderId: string, payload: Partial<any>) => {
+const updateOrder = async (orderId: string, payload: any) => {
   const existingOrder = await Order.findById(orderId);
+
   if (!existingOrder) {
-    throw new AppError(httpStatus.NOT_FOUND, "Order Not Found");
+    throw new AppError(httpStatus.NOT_FOUND, "Order not found");
   }
 
-  // Optional: restrict certain fields if needed (like totalPrice)
+  const prevStatus = existingOrder.orderStatus;
+
   const updatedOrder = await Order.findByIdAndUpdate(orderId, payload, {
-    new: true,
+    returnDocument: "after",
     runValidators: true,
   });
+
+  if (!updatedOrder) {
+    throw new AppError(httpStatus.NOT_FOUND, "Order update failed");
+  }
+
+  if (
+    prevStatus !== OrderStatus.CONFIRMED &&
+    updatedOrder.orderStatus === OrderStatus.CONFIRMED
+  ) {
+    await CourierServices.createCourier(orderId);
+  }
 
   return updatedOrder;
 };
@@ -292,7 +308,7 @@ const getMyOrders = async (userId: string, query: Record<string, string>) => {
   }
 
   // 3️⃣ Initialize query builder
-  let queryBuilder = new QueryBuilder(baseQuery, query)
+  const queryBuilder = new QueryBuilder(baseQuery, query)
     .search(orderSearchableFields)
     .filter()
     .sort()
@@ -320,7 +336,6 @@ const getMyOrders = async (userId: string, query: Record<string, string>) => {
     })
     .exec();
 
-  // 5️⃣ Get meta (pagination info)
   const meta = await queryBuilder.getMeta();
 
   return {
